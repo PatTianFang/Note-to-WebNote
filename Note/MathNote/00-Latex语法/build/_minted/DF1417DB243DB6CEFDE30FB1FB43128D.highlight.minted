@@ -1,0 +1,27 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{k}{\PYGZbs{}documentclass}\PYG{n+na}{[UTF8]}\PYG{n+nb}{\PYGZob{}}ctexart\PYG{n+nb}{\PYGZcb{}}
+
+\PYG{k}{\PYGZbs{}usepackage}\PYG{n+nb}{\PYGZob{}}amsmath\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}usepackage}\PYG{n+nb}{\PYGZob{}}float\PYG{n+nb}{\PYGZcb{}}  \PYG{c}{\PYGZpc{} 提供 [H] 选项}
+\PYG{k}{\PYGZbs{}usepackage}\PYG{n+na}{[svgnames]}\PYG{n+nb}{\PYGZob{}}xcolor\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}usepackage}\PYG{n+nb}{\PYGZob{}}geometry\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}geometry}\PYG{n+nb}{\PYGZob{}}a4paper, scale=0.8\PYG{n+nb}{\PYGZcb{}}
+
+\PYG{k}{\PYGZbs{}title}\PYG{n+nb}{\PYGZob{}}文档标题\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}author}\PYG{n+nb}{\PYGZob{}}作者姓名\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}date}\PYG{n+nb}{\PYGZob{}}\PYG{k}{\PYGZbs{}today}\PYG{n+nb}{\PYGZcb{}}
+
+\PYG{k}{\PYGZbs{}begin}\PYG{n+nb}{\PYGZob{}}document\PYG{n+nb}{\PYGZcb{}}
+
+\PYG{k}{\PYGZbs{}maketitle}
+
+\PYG{k}{\PYGZbs{}section}\PYG{n+nb}{\PYGZob{}}引言\PYG{n+nb}{\PYGZcb{}}
+
+这是一个简单的段落。LaTeX会自动处理段落缩进和换行。
+
+\PYG{k}{\PYGZbs{}subsection}\PYG{n+nb}{\PYGZob{}}子标题\PYG{n+nb}{\PYGZcb{}}
+
+这是子标题下的段落内容。
+
+\PYG{k}{\PYGZbs{}end}\PYG{n+nb}{\PYGZob{}}document\PYG{n+nb}{\PYGZcb{}}
+\end{MintedVerbatim}

@@ -1,0 +1,17 @@
+\contentsline {section}{\numberline {1}简单结构}{1}{}%
+\contentsline {section}{\numberline {2}文字排版}{2}{}%
+\contentsline {subsection}{\numberline {2.1}字符输入}{2}{}%
+\contentsline {subsubsection}{\numberline {2.1.1}换行和换页}{2}{}%
+\contentsline {subsubsection}{\numberline {2.1.2}字体}{2}{}%
+\contentsline {subsubsection}{\numberline {2.1.3}字体大小}{3}{}%
+\contentsline {subsubsection}{\numberline {2.1.4}字体颜色和背景色}{3}{}%
+\contentsline {subsubsection}{\numberline {2.1.5}公式加框}{5}{}%
+\contentsline {subsubsection}{\numberline {2.1.6}特殊符号的输入}{5}{}%
+\contentsline {subsubsection}{\numberline {2.1.7}水平间距}{6}{}%
+\contentsline {subsubsection}{\numberline {2.1.8}列表环境}{7}{}%
+\contentsline {subsection}{\numberline {2.2}数学输入}{8}{}%
+\contentsline {subsubsection}{\numberline {2.2.1}基本元素}{8}{}%
+\contentsline {paragraph}{希腊字母}{8}{}%
+\contentsline {paragraph}{上标和下标}{9}{}%
+\contentsline {paragraph}{分数和根式}{9}{}%
+\contentsline {paragraph}{运算符}{9}{}%

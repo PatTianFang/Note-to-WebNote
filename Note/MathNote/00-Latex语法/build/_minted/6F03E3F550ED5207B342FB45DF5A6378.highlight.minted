@@ -1,0 +1,7 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{k}{\PYGZbs{}begin}\PYG{n+nb}{\PYGZob{}}description\PYG{n+nb}{\PYGZcb{}}
+\PYG{k}{\PYGZbs{}item}\PYG{n+na}{[描述列表项1]} 描述列表项1的内容。
+\PYG{k}{\PYGZbs{}item}\PYG{n+na}{[描述列表项2]} 描述列表项2的内容。
+\PYG{k}{\PYGZbs{}item}\PYG{n+na}{[描述列表项3]} 描述列表项3的内容。
+\PYG{k}{\PYGZbs{}end}\PYG{n+nb}{\PYGZob{}}description\PYG{n+nb}{\PYGZcb{}}
+\end{MintedVerbatim}
