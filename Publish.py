@@ -7,10 +7,15 @@ from datetime import datetime
 from urllib.parse import quote
 
 WEBNOTE_ROOT = os.path.join('.', 'WebNote', 'PatTianFang.github.io')
+ROOT_REPO = '.'
+NOTE_ROOT = os.path.join('.', 'Note')
 POSTS_BASE_DIR = os.path.join(WEBNOTE_ROOT, 'posts')
 POSTS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'posts.json')
 HTML_TEMPLATE_PATH = os.path.join(POSTS_BASE_DIR, 'demo', 'pdf-embed-demo.html')
 GENERATED_BY = 'Publish.py'
+NOTE_REMOTE_URL = 'https://github.com/PatTianFang/Note.git'
+ROOT_REMOTE_URL = 'https://github.com/PatTianFang/Note-to-WebNote.git'
+NOTE_BRANCH = 'main'
 R2_BUCKET_ENV = 'WEBNOTE_R2_BUCKET'
 R2_PUBLIC_BASE_URL_ENV = 'WEBNOTE_R2_PUBLIC_BASE_URL'
 R2_CACHE_CONTROL_ENV = 'WEBNOTE_R2_CACHE_CONTROL'
@@ -166,12 +171,12 @@ def delete_r2_object(r2_config, object_key):
     return run_wrangler(r2_config, args, f"删除 R2 对象 {object_key}")
 
 
-def run_git(args, action):
+def run_git(args, action, repo_path=WEBNOTE_ROOT, check=True):
     try:
         result = subprocess.run(
             ['git', *args],
-            cwd=WEBNOTE_ROOT,
-            check=True,
+            cwd=repo_path,
+            check=check,
             capture_output=True,
             text=True,
             encoding='utf-8',
@@ -184,6 +189,114 @@ def run_git(args, action):
         stdout = e.stdout.strip() if e.stdout else ''
         logging.error(f"{action} 失败: {stderr or stdout or e}")
         return None
+
+
+def ensure_git_repo(repo_path, repo_label, init_if_missing=False, branch=None):
+    if not os.path.isdir(repo_path):
+        logging.error(f"{repo_label} path does not exist: {repo_path}")
+        return False
+
+    git_dir = os.path.join(repo_path, '.git')
+    if os.path.isdir(git_dir):
+        return True
+
+    if not init_if_missing:
+        logging.error(f"{repo_label} Git repository does not exist: {repo_path}")
+        return False
+
+    if run_git(['init'], f'init {repo_label} repo', repo_path=repo_path) is None:
+        return False
+
+    if branch and run_git(['branch', '-M', branch], f'set {repo_label} branch', repo_path=repo_path) is None:
+        return False
+
+    return True
+
+
+def get_origin_url(repo_path):
+    result = subprocess.run(
+        ['git', 'remote', 'get-url', 'origin'],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def ensure_origin_remote(repo_path, repo_label, remote_url):
+    current_remote = get_origin_url(repo_path)
+    if not current_remote:
+        return run_git(
+            ['remote', 'add', 'origin', remote_url],
+            f'add {repo_label} origin',
+            repo_path=repo_path,
+        ) is not None
+
+    if current_remote != remote_url:
+        return run_git(
+            ['remote', 'set-url', 'origin', remote_url],
+            f'update {repo_label} origin',
+            repo_path=repo_path,
+        ) is not None
+
+    return True
+
+
+def get_current_branch(repo_path, fallback_branch=None):
+    result = run_git(['branch', '--show-current'], 'get current Git branch', repo_path=repo_path)
+    if result is None:
+        return fallback_branch
+
+    branch = result.stdout.strip()
+    return branch or fallback_branch
+
+
+def commit_and_push_repo(repo_path, repo_label, remote_url=None, branch=None, init_if_missing=False):
+    if not ensure_git_repo(repo_path, repo_label, init_if_missing=init_if_missing, branch=branch):
+        return False
+
+    if branch and run_git(['branch', '-M', branch], f'set {repo_label} branch', repo_path=repo_path) is None:
+        return False
+
+    if remote_url and not ensure_origin_remote(repo_path, repo_label, remote_url):
+        return False
+
+    status_before = run_git(['status', '--porcelain'], f'check {repo_label} status', repo_path=repo_path)
+    if status_before is None:
+        return False
+
+    if not status_before.stdout.strip():
+        logging.info(f'{repo_label} has no changes to commit')
+        return True
+
+    if run_git(['add', '.'], f'stage {repo_label} changes', repo_path=repo_path) is None:
+        return False
+
+    status_after_add = run_git(['status', '--porcelain'], f'check staged {repo_label} status', repo_path=repo_path)
+    if status_after_add is None:
+        return False
+
+    if not status_after_add.stdout.strip():
+        logging.info(f'{repo_label} has no changes to commit')
+        return True
+
+    commit_message = f"Publish {repo_label} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    if run_git(['commit', '-m', commit_message], f'commit {repo_label} changes', repo_path=repo_path) is None:
+        return False
+
+    push_branch = branch or get_current_branch(repo_path)
+    push_args = ['push']
+    if push_branch:
+        push_args = ['push', '-u', 'origin', push_branch]
+
+    if run_git(push_args, f'push {repo_label} changes', repo_path=repo_path) is None:
+        return False
+
+    logging.info(f'{repo_label} committed and pushed')
+    return True
 
 
 def deploy_webnote_repo():
@@ -219,6 +332,28 @@ def deploy_webnote_repo():
 
     logging.info('WebNote 已提交并推送，Cloudflare Pages 将自动部署')
     return True
+
+
+def deploy_note_repo():
+    return commit_and_push_repo(
+        NOTE_ROOT,
+        'Note',
+        remote_url=NOTE_REMOTE_URL,
+        branch=NOTE_BRANCH,
+        init_if_missing=True,
+    )
+
+
+def deploy_root_repo():
+    return commit_and_push_repo(
+        ROOT_REPO,
+        'Note-to-WebNote',
+        remote_url=ROOT_REMOTE_URL,
+    )
+
+
+def deploy_git_repositories():
+    return deploy_webnote_repo() and deploy_note_repo() and deploy_root_repo()
 
 
 def build_post_entry(pdf_name_no_ext, category, create_time_str):
@@ -399,7 +534,7 @@ if __name__ == '__main__':
     setup_logging()
     logging.info('开始同步 PDF 文件...')
     cleanup_local_artifacts()
-    if sync_pdf_files() and cleanup_local_artifacts() and deploy_webnote_repo():
+    if sync_pdf_files() and cleanup_local_artifacts() and deploy_git_repositories():
         logging.info('同步完成。')
     else:
         logging.error('同步未完成。')
