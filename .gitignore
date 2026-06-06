@@ -21,6 +21,7 @@ env/
 
 # Cloudflare / Wrangler local state
 .wrangler/
+.webnote-r2-manifest.json
 
 # Build and packaging artifacts
 build/

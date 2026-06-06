@@ -1,9 +1,11 @@
+import hashlib
 import json
 import logging
 import os
 import shutil
 import subprocess
 from datetime import datetime
+from urllib import error, request
 from urllib.parse import quote
 
 WEBNOTE_ROOT = os.path.join('.', 'WebNote', 'PatTianFang.github.io')
@@ -20,6 +22,8 @@ R2_BUCKET_ENV = 'WEBNOTE_R2_BUCKET'
 R2_PUBLIC_BASE_URL_ENV = 'WEBNOTE_R2_PUBLIC_BASE_URL'
 R2_CACHE_CONTROL_ENV = 'WEBNOTE_R2_CACHE_CONTROL'
 DEFAULT_R2_CACHE_CONTROL = 'public, max-age=31536000'
+SKIPPED_PDF_PATH_PARTS = ('参考资料',)
+R2_MANIFEST_PATH = '.webnote-r2-manifest.json'
 LOCAL_ARTIFACT_PATHS = [
     os.path.join(WEBNOTE_ROOT, 'pdfs'),
     '.wrangler',
@@ -121,12 +125,106 @@ def build_r2_object_key(category, filename):
     return f"pdfs/{category}/{filename}"
 
 
+def should_publish_pdf(source_file, source_base_dir):
+    rel_path = os.path.relpath(source_file, source_base_dir)
+    rel_parts = rel_path.split(os.sep)
+    return not any(
+        part.startswith('.') or any(skip_part in part for skip_part in SKIPPED_PDF_PATH_PARTS)
+        for part in rel_parts
+    )
+
+
 def build_public_pdf_url(public_base_url, object_key, version=None):
     encoded_key = quote(object_key.replace('\\', '/'), safe='/-._~')
     public_url = f"{public_base_url.rstrip('/')}/{encoded_key}"
     if version is not None:
         public_url = f"{public_url}?v={quote(str(version), safe='')}"
     return public_url
+
+
+def load_r2_manifest():
+    if not os.path.exists(R2_MANIFEST_PATH):
+        return {}
+    try:
+        with open(R2_MANIFEST_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logging.warning(f"Failed to read R2 manifest, rebuilding it: {e}")
+        return {}
+
+
+def save_r2_manifest(manifest):
+    try:
+        with open(R2_MANIFEST_PATH, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except Exception as e:
+        logging.warning(f"Failed to write R2 manifest: {e}")
+
+
+def build_source_signature(source_file):
+    st = os.stat(source_file)
+    return {
+        'size': st.st_size,
+        'mtime_ns': st.st_mtime_ns,
+    }
+
+
+def manifest_entry_matches_source(manifest, object_key, source_file):
+    entry = manifest.get(object_key)
+    if not entry:
+        return False
+    return entry == build_source_signature(source_file)
+
+
+def update_manifest_entry(manifest, object_key, source_file):
+    manifest[object_key] = build_source_signature(source_file)
+
+
+def get_file_md5(file_path):
+    digest = hashlib.md5()
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def get_remote_headers(url):
+    try:
+        req = request.Request(
+            url,
+            method='HEAD',
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        with request.urlopen(req, timeout=20) as response:
+            return response.headers
+    except error.HTTPError as e:
+        if e.code == 404:
+            return None
+        logging.warning(f"R2 object HEAD returned HTTP {e.code}: {url}")
+        return None
+    except Exception as e:
+        logging.warning(f"R2 object HEAD failed [{url}]: {e}")
+        return None
+
+
+def r2_object_matches_source(source_file, public_url):
+    headers = get_remote_headers(public_url)
+    if not headers:
+        return False
+
+    remote_length = headers.get('Content-Length')
+    if remote_length:
+        try:
+            if int(remote_length) != os.path.getsize(source_file):
+                return False
+        except ValueError:
+            return False
+
+    remote_etag = headers.get('ETag', '').strip('"').lower()
+    if len(remote_etag) != 32:
+        return False
+
+    return remote_etag == get_file_md5(source_file)
 
 
 def run_wrangler(r2_config, args, action):
@@ -149,7 +247,17 @@ def run_wrangler(r2_config, args, action):
         return False
 
 
-def upload_pdf_to_r2(r2_config, source_file, object_key):
+def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
+    if manifest_entry_matches_source(manifest, object_key, source_file):
+        logging.info(f"PDF unchanged locally, skipped R2 check: {object_key}")
+        return True
+
+    public_url = build_public_pdf_url(r2_config['public_base_url'], object_key)
+    if r2_object_matches_source(source_file, public_url):
+        update_manifest_entry(manifest, object_key, source_file)
+        logging.info(f"PDF unchanged in R2, skipped upload: {object_key}")
+        return True
+
     args = [
         'r2',
         'object',
@@ -163,6 +271,17 @@ def upload_pdf_to_r2(r2_config, source_file, object_key):
         r2_config['cache_control'],
         '--remote',
     ]
+    upload_ok = run_wrangler(r2_config, args, f"Upload R2 object {object_key}")
+    if upload_ok:
+        update_manifest_entry(manifest, object_key, source_file)
+        return True
+
+    if r2_object_matches_source(source_file, public_url):
+        update_manifest_entry(manifest, object_key, source_file)
+        logging.warning(f"Wrangler returned failure, but R2 object is current: {object_key}")
+        return True
+
+    return False
     return run_wrangler(r2_config, args, f"上传 R2 对象 {object_key}")
 
 
@@ -181,8 +300,13 @@ def run_git(args, action, repo_path=WEBNOTE_ROOT, check=True):
             text=True,
             encoding='utf-8',
         )
-        if result.stdout.strip():
-            logging.info(result.stdout.strip())
+        stdout = result.stdout.strip()
+        if stdout:
+            line_count = stdout.count('\n') + 1
+            if len(stdout) > 2000 or line_count > 40:
+                logging.info(f"{action} output omitted ({line_count} lines, {len(stdout)} chars)")
+            else:
+                logging.info(stdout)
         return result
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.strip() if e.stderr else ''
@@ -245,6 +369,28 @@ def ensure_origin_remote(repo_path, repo_label, remote_url):
     return True
 
 
+def copy_git_identity(source_repo_path, target_repo_path):
+    for key in ('user.name', 'user.email'):
+        source_value = subprocess.run(
+            ['git', 'config', key],
+            cwd=source_repo_path,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+        )
+        if source_value.returncode != 0 or not source_value.stdout.strip():
+            continue
+
+        if run_git(
+            ['config', key, source_value.stdout.strip()],
+            f'set Git {key}',
+            repo_path=target_repo_path,
+        ) is None:
+            return False
+
+    return True
+
+
 def get_current_branch(repo_path, fallback_branch=None):
     result = run_git(['branch', '--show-current'], 'get current Git branch', repo_path=repo_path)
     if result is None:
@@ -256,6 +402,9 @@ def get_current_branch(repo_path, fallback_branch=None):
 
 def commit_and_push_repo(repo_path, repo_label, remote_url=None, branch=None, init_if_missing=False):
     if not ensure_git_repo(repo_path, repo_label, init_if_missing=init_if_missing, branch=branch):
+        return False
+
+    if not copy_git_identity(ROOT_REPO, repo_path):
         return False
 
     if branch and run_git(['branch', '-M', branch], f'set {repo_label} branch', repo_path=repo_path) is None:
@@ -453,6 +602,7 @@ def sync_pdf_files():
     if not html_template:
         return False
 
+    r2_manifest = load_r2_manifest()
     current_posts_by_url = {}
     had_errors = False
 
@@ -481,6 +631,10 @@ def sync_pdf_files():
                     continue
 
                 source_file = os.path.join(root, filename)
+                if not should_publish_pdf(source_file, source_base_dir):
+                    logging.info(f"Skipped reference PDF: {source_file}")
+                    continue
+
                 pdf_name_no_ext = os.path.splitext(filename)[0]
                 target_html_file = os.path.join(target_posts_dir, f'{pdf_name_no_ext}.html')
 
@@ -491,7 +645,7 @@ def sync_pdf_files():
                     pdf_version = int(st.st_mtime)
                     pdf_url = build_public_pdf_url(r2_config['public_base_url'], object_key, pdf_version)
 
-                    if not upload_pdf_to_r2(r2_config, source_file, object_key):
+                    if not upload_pdf_to_r2(r2_config, source_file, object_key, r2_manifest):
                         had_errors = True
                         continue
                     logging.info(f"PDF 上传 R2 成功: {object_key}")
@@ -523,10 +677,12 @@ def sync_pdf_files():
                     logging.error(f"处理 [{filename}] 失败: {e}")
 
     if had_errors:
+        save_r2_manifest(r2_manifest)
         logging.error("存在 PDF 处理或上传失败，已跳过 posts.json 更新以保护现有索引")
         return False
 
     update_posts_json(current_posts_by_url, r2_config)
+    save_r2_manifest(r2_manifest)
     return True
 
 
