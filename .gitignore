@@ -10,6 +10,11 @@ desktop.ini
 *.swp
 *.swo
 
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
@@ -18,6 +23,10 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Node / tooling caches
+node_modules/
+.cache/
 
 # Cloudflare / Wrangler local state
 .wrangler/
@@ -48,7 +57,7 @@ Publish.spec
 *.synctex.gz
 *.toc
 
-# Local note sources and task logs are not committed by the root repo.
+# Local note sources and task logs are managed outside the root repo.
 Note/
 Problems/
 Problem*.md
