@@ -85,6 +85,34 @@ def cleanup_local_artifacts():
     return ok
 
 
+def cleanup_empty_directories(base_dir):
+    if not os.path.isdir(base_dir):
+        return True
+
+    ok = True
+    for root, _dirs, _files in os.walk(base_dir, topdown=False):
+        if os.path.abspath(root) == os.path.abspath(base_dir):
+            continue
+        if not is_inside_workspace(root):
+            logging.error(f"Refuse to remove empty directory outside workspace: {root}")
+            ok = False
+            continue
+        try:
+            if os.listdir(root):
+                continue
+        except OSError as e:
+            logging.warning(f"Failed to inspect directory [{root}]: {e}")
+            ok = False
+            continue
+        try:
+            os.rmdir(root)
+            logging.info(f"Removed empty directory: {root}")
+        except OSError as e:
+            logging.warning(f"Failed to remove empty directory [{root}]: {e}")
+            ok = False
+    return ok
+
+
 def get_r2_config():
     bucket = os.environ.get(R2_BUCKET_ENV, '').strip()
     public_base_url = os.environ.get(R2_PUBLIC_BASE_URL_ENV, '').strip().rstrip('/')
@@ -722,6 +750,7 @@ def sync_pdf_files():
 
     prune_r2_manifest(r2_manifest, current_object_keys, r2_config)
     save_r2_manifest(r2_manifest)
+    cleanup_empty_directories(POSTS_BASE_DIR)
     return True
 
 
