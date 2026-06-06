@@ -47,14 +47,10 @@ Publish.spec
 *.synctex.gz
 *.toc
 
-# Note source policy: keep Markdown in Git, ignore all other note files.
-Note/**
-!Note/**/
-!Note/**/*.md
-
-# Nested Git checkouts inside notes are local dependencies, not note sources.
-Note/**/third_party/darknet/
-Note/**/yolov5/
+# Local note sources and task logs are not committed by the root repo.
+Note/
+Problems/
+Problem*.md
 
 # Generated PDFs are uploaded to R2, not committed with the site.
 WebNote/**/pdfs/
