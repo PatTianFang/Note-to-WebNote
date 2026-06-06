@@ -47,70 +47,14 @@ Publish.spec
 *.synctex.gz
 *.toc
 
-# Local note-app state
-Note/.claudian/
-Note/.obsidian/
-Note/.trash/
+# Note source policy: keep Markdown in Git, ignore all other note files.
+Note/**
+!Note/**/
+!Note/**/*.md
 
-# Large generated note exports uploaded to R2
-Note/**/*.pdf
+# Nested Git checkouts inside notes are local dependencies, not note sources.
+Note/**/third_party/darknet/
+Note/**/yolov5/
+
+# Generated PDFs are uploaded to R2, not committed with the site.
 WebNote/**/pdfs/
-
-# Large local media and software packages inside notes
-Note/**/*.iso
-Note/**/*.mp4
-Note/**/*.mov
-Note/**/*.avi
-Note/**/*.mkv
-Note/**/*.zip
-Note/**/*.rar
-Note/**/*.7z
-Note/**/*.tar
-Note/**/*.tar.gz
-Note/**/*.gz
-Note/**/*.exe
-Note/**/*.msi
-Note/**/*.dmg
-Note/**/*.p.downloading
-
-# Large dependencies, model weights, and compiled binaries in notes
-Note/**/*.deb
-Note/**/*.pack
-Note/**/*.a
-Note/**/*.so
-Note/**/*.so.*
-Note/**/*.lib
-Note/**/*.dll
-Note/**/*.weights
-Note/**/*.pt
-Note/**/*.pth
-Note/**/*.engine
-Note/**/*.onnx
-Note/**/*.bin
-Note/**/*.elf
-Note/**/*.hex
-Note/**/*.o
-Note/**/*.obj
-Note/**/cuda_local/
-Note/**/cuda_debs/
-Note/**/opencv_local/
-
-# Downloaded or generated third-party projects inside notes
-Note/**/ardupilot/
-Note/**/ardupilot_gazebo/
-Note/**/px4/
-Note/**/PX4-Autopilot/
-Note/**/ego-planner-swarm/
-Note/**/yolov5*/
-Note/**/awesome-design-md-main/
-Note/**/catkin_ws/
-Note/**/devel/
-Note/**/install/
-Note/**/Yolo/
-Note/**/Yolov5Cpp/
-Note/**/models/
-Note/**/third_party/
-Note/**/ToDo/
-Note/**/Jetson部署Yolo/**/环境配置/
-Note/嵌入式开发/02-Jetson开发/01-Jetson部署Yolo/00-Prepare/环境配置/
-Note/嵌入式开发/02-Jetson开发/01-Jetson部署Yolo/01-Yolov5Cpp/

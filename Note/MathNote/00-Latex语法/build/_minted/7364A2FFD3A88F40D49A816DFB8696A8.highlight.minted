@@ -1,7 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{k}{\PYGZbs{}begin}\PYG{n+nb}{\PYGZob{}}enumerate\PYG{n+nb}{\PYGZcb{}}
-\PYG{k}{\PYGZbs{}item} 有序列表项
-\PYG{k}{\PYGZbs{}item} 有序列表项
-\PYG{k}{\PYGZbs{}item} 有序列表项
-\PYG{k}{\PYGZbs{}end}\PYG{n+nb}{\PYGZob{}}enumerate\PYG{n+nb}{\PYGZcb{}}
-\end{MintedVerbatim}

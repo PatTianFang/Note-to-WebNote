@@ -1,3 +1,0 @@
-根据中国国家测绘地理信息局的规定，所有在中国境内公开使用的电子地图必须对原始 GPS 坐标（WGS-84）进行加密处理，所以读取到的GPS数据需要进行转换才能在百度找到准确的对应位置。
-坐标转换网址：https://tool.lu/coordinate/index.html
-百度地图网址：https://lbsyun.baidu.com/jsdemo/demo/yLngLatLocation.htm
