@@ -21,9 +21,11 @@ NOTE_BRANCH = 'main'
 R2_BUCKET_ENV = 'WEBNOTE_R2_BUCKET'
 R2_PUBLIC_BASE_URL_ENV = 'WEBNOTE_R2_PUBLIC_BASE_URL'
 R2_CACHE_CONTROL_ENV = 'WEBNOTE_R2_CACHE_CONTROL'
+WRANGLER_TIMEOUT_ENV = 'WEBNOTE_WRANGLER_TIMEOUT_SECONDS'
 DEFAULT_R2_CACHE_CONTROL = 'public, max-age=31536000'
-SKIPPED_PDF_PATH_PARTS = ('参考资料',)
+DEFAULT_WRANGLER_TIMEOUT_SECONDS = 600
 R2_MANIFEST_PATH = '.webnote-r2-manifest.json'
+R2_MANIFEST_VERSION = 1
 LOCAL_ARTIFACT_PATHS = [
     os.path.join(WEBNOTE_ROOT, 'pdfs'),
     '.wrangler',
@@ -125,13 +127,21 @@ def build_r2_object_key(category, filename):
     return f"pdfs/{category}/{filename}"
 
 
-def should_publish_pdf(source_file, source_base_dir):
+def build_r2_object_key_from_source(source_file, source_base_dir):
+    rel_path = os.path.relpath(source_file, source_base_dir).replace(os.sep, '/')
+    return f"pdfs/{rel_path}"
+
+
+def build_post_url_from_source(source_file, source_base_dir):
     rel_path = os.path.relpath(source_file, source_base_dir)
-    rel_parts = rel_path.split(os.sep)
-    return not any(
-        part.startswith('.') or any(skip_part in part for skip_part in SKIPPED_PDF_PATH_PARTS)
-        for part in rel_parts
-    )
+    rel_html_path = f"{os.path.splitext(rel_path)[0]}.html"
+    return f"posts/{rel_html_path.replace(os.sep, '/')}"
+
+
+def build_site_root_prefix(post_url):
+    directory = os.path.dirname(post_url.replace('/', os.sep))
+    depth = len([part for part in directory.split(os.sep) if part])
+    return '../' * depth
 
 
 def build_public_pdf_url(public_base_url, object_key, version=None):
@@ -164,6 +174,7 @@ def save_r2_manifest(manifest):
 def build_source_signature(source_file):
     st = os.stat(source_file)
     return {
+        'version': R2_MANIFEST_VERSION,
         'size': st.st_size,
         'mtime_ns': st.st_mtime_ns,
     }
@@ -178,6 +189,14 @@ def manifest_entry_matches_source(manifest, object_key, source_file):
 
 def update_manifest_entry(manifest, object_key, source_file):
     manifest[object_key] = build_source_signature(source_file)
+
+
+def prune_r2_manifest(manifest, current_object_keys, r2_config):
+    stale_object_keys = sorted(set(manifest) - current_object_keys)
+    for object_key in stale_object_keys:
+        if delete_r2_object(r2_config, object_key):
+            manifest.pop(object_key, None)
+            logging.info(f"Removed stale R2 manifest entry: {object_key}")
 
 
 def get_file_md5(file_path):
@@ -230,16 +249,25 @@ def r2_object_matches_source(source_file, public_url):
 def run_wrangler(r2_config, args, action):
     command = [r2_config['wrangler_path'], *args]
     try:
+        timeout_seconds = int(os.environ.get(WRANGLER_TIMEOUT_ENV, DEFAULT_WRANGLER_TIMEOUT_SECONDS))
+    except ValueError:
+        timeout_seconds = DEFAULT_WRANGLER_TIMEOUT_SECONDS
+
+    try:
         result = subprocess.run(
             command,
             check=True,
             capture_output=True,
             text=True,
             encoding='utf-8',
+            timeout=timeout_seconds,
         )
         if result.stdout.strip():
             logging.debug(result.stdout.strip())
         return True
+    except subprocess.TimeoutExpired:
+        logging.error(f"{action} timed out after {timeout_seconds} seconds")
+        return False
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.strip() if e.stderr else ''
         stdout = e.stdout.strip() if e.stdout else ''
@@ -282,7 +310,6 @@ def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
         return True
 
     return False
-    return run_wrangler(r2_config, args, f"上传 R2 对象 {object_key}")
 
 
 def delete_r2_object(r2_config, object_key):
@@ -505,14 +532,15 @@ def deploy_git_repositories():
     return deploy_webnote_repo() and deploy_note_repo() and deploy_root_repo()
 
 
-def build_post_entry(pdf_name_no_ext, category, create_time_str):
+def build_post_entry(pdf_name_no_ext, category, create_time_str, post_url, object_key):
     return {
         'id': pdf_name_no_ext,
         'title': pdf_name_no_ext,
         'date': create_time_str,
         'category': category,
-        'url': f'posts/{category}/{pdf_name_no_ext}.html',
+        'url': post_url,
         'excerpt': f'这是关于 {pdf_name_no_ext} 的 PDF 文档预览。',
+        'r2_object_key': object_key,
         'generated_by': GENERATED_BY,
     }
 
@@ -547,7 +575,7 @@ def delete_generated_assets(post, r2_config):
     pdf_name = f"{os.path.splitext(html_name)[0]}.pdf"
 
     html_path = os.path.join(WEBNOTE_ROOT, *url.split('/'))
-    object_key = build_r2_object_key(category, pdf_name)
+    object_key = post.get('r2_object_key') or build_r2_object_key(category, pdf_name)
 
     delete_file_if_exists(html_path)
     delete_r2_object(r2_config, object_key)
@@ -583,8 +611,10 @@ def update_posts_json(current_posts_by_url, r2_config):
             json.dump(merged_data, f, ensure_ascii=False, indent=4)
 
         logging.info('更新 posts.json 成功')
+        return True
     except Exception as e:
         logging.error(f"更新 posts.json 失败: {e}")
+        return False
 
 
 def sync_pdf_files():
@@ -604,6 +634,7 @@ def sync_pdf_files():
 
     r2_manifest = load_r2_manifest()
     current_posts_by_url = {}
+    current_object_keys = set()
     had_errors = False
 
     try:
@@ -631,17 +662,16 @@ def sync_pdf_files():
                     continue
 
                 source_file = os.path.join(root, filename)
-                if not should_publish_pdf(source_file, source_base_dir):
-                    logging.info(f"Skipped reference PDF: {source_file}")
-                    continue
-
                 pdf_name_no_ext = os.path.splitext(filename)[0]
-                target_html_file = os.path.join(target_posts_dir, f'{pdf_name_no_ext}.html')
+                post_url = build_post_url_from_source(source_file, source_base_dir)
+                target_html_file = os.path.join(WEBNOTE_ROOT, *post_url.split('/'))
 
                 try:
+                    os.makedirs(os.path.dirname(target_html_file), exist_ok=True)
                     st = os.stat(source_file)
                     create_time_str = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d')
-                    object_key = build_r2_object_key(item, filename)
+                    object_key = build_r2_object_key_from_source(source_file, source_base_dir)
+                    current_object_keys.add(object_key)
                     pdf_version = int(st.st_mtime)
                     pdf_url = build_public_pdf_url(r2_config['public_base_url'], object_key, pdf_version)
 
@@ -663,11 +693,16 @@ def sync_pdf_files():
                     content = content.replace('模板修改5', embed_tag)
                     content = content.replace('模板修改6', pdf_url)
 
+                    site_root_prefix = build_site_root_prefix(post_url)
+                    content = content.replace('../../css/style.css', f'{site_root_prefix}css/style.css')
+                    content = content.replace('../../index.html', f'{site_root_prefix}index.html')
+                    content = content.replace('../../about.html', f'{site_root_prefix}about.html')
+
                     with open(target_html_file, 'w', encoding='utf-8') as f:
                         f.write(content)
                     logging.info(f"HTML 创建成功: {pdf_name_no_ext}.html")
 
-                    post_entry = build_post_entry(pdf_name_no_ext, item, create_time_str)
+                    post_entry = build_post_entry(pdf_name_no_ext, item, create_time_str, post_url, object_key)
                     post_url = post_entry['url']
                     if post_url in current_posts_by_url:
                         logging.warning(f"检测到重复 PDF 名称，后处理文件将覆盖先前记录: {post_url}")
@@ -681,7 +716,11 @@ def sync_pdf_files():
         logging.error("存在 PDF 处理或上传失败，已跳过 posts.json 更新以保护现有索引")
         return False
 
-    update_posts_json(current_posts_by_url, r2_config)
+    if not update_posts_json(current_posts_by_url, r2_config):
+        save_r2_manifest(r2_manifest)
+        return False
+
+    prune_r2_manifest(r2_manifest, current_object_keys, r2_config)
     save_r2_manifest(r2_manifest)
     return True
 
