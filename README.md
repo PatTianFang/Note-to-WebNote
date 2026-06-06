@@ -23,7 +23,8 @@
 python Publish.py
 ```
 脚本将自动完成以下工作：
-- **扁平化处理**：将深层目录下的 PDF 统一提取到对应的一级分类下。
+- **扁平化处理**：将深层目录下的 PDF 统一映射到对应的一级分类下。
+- **上传 R2**：将 PDF 上传到 Cloudflare R2，不再把 PDF 发布副本提交到 GitHub。
 - **生成页面**：为每个 PDF 生成独立的 HTML 阅读页面。
 - **更新索引**：自动更新 `posts.json` 数据源。
 
@@ -32,8 +33,8 @@ python Publish.py
 
 ### 4. 发布上线 (Deploy)
 将 `WebNote/PatTianFang.github.io` 目录下的变更推送到 GitHub 仓库。
-- 确保 GitHub 仓库开启了 **GitHub Pages** 功能。
-- 推送后，GitHub Pages 将自动部署你的静态博客。
+- 确保 Cloudflare Pages 已连接该 GitHub 仓库。
+- 推送后，Cloudflare Pages 将自动部署你的静态博客。
 
 ---
 
@@ -44,8 +45,8 @@ python Publish.py
 1. **智能扁平化**：
    - 递归遍历 `Note` 下的所有子文件夹。
    - 自动将所有 PDF 文件同步到 Web 目录的对应一级分类下，忽略源路径的复杂深度，让 Web 端分类更清晰。
-2. **双路径同步**：
-   - `pdfs/`：存放实体 PDF 文件。
+2. **双路径发布**：
+   - Cloudflare R2：存放实体 PDF 文件。
    - `posts/`：存放自动生成的 HTML 包装页面。
 3. **自动化生成**：
    - 基于模板 (`posts/demo/pdf-embed-demo.html`) 自动生成包含 PDF 嵌入代码的 HTML 文件。
@@ -84,14 +85,64 @@ python Publish.py
 ├── WebNote/               # [输出端] Web 项目根目录
 │   └── PatTianFang.github.io/
 │       ├── data/posts.json        # 自动生成的文章索引
-│       ├── pdfs/                  # 同步后的 PDF 文件
 │       ├── posts/                 # 自动生成的 HTML 页面
 │       └── index.html             # 博客首页
 ├── Publish.py             # 自动化同步脚本
 └── README.md              # 本说明文档
 ```
 
-## 🚀 部署 GitHub Pages 详细步骤
+## 🚀 部署 Cloudflare Pages + R2 详细步骤
+
+### 1. 准备 Cloudflare R2
+
+1. 注册 Cloudflare 账号并接入一个域名。
+2. 创建 R2 bucket，建议命名为 `webnote-pdfs`。
+3. 给该 bucket 绑定自定义域名，例如 `https://static.example.com`。
+4. 安装并登录 Wrangler：
+   ```powershell
+   npm install -g wrangler
+   wrangler login
+   wrangler r2 bucket list
+   ```
+
+### 2. 设置发布环境变量
+
+每次运行 `Publish.py` 前，在 PowerShell 中设置：
+
+```powershell
+$env:WEBNOTE_R2_BUCKET="webnote-pdfs"
+$env:WEBNOTE_R2_PUBLIC_BASE_URL="https://static.example.com"
+```
+
+可选：如果需要覆盖默认缓存策略，可以设置：
+
+```powershell
+$env:WEBNOTE_R2_CACHE_CONTROL="public, max-age=31536000"
+```
+
+### 3. 生成并上传
+
+```powershell
+python Publish.py
+```
+
+脚本会把 PDF 上传到 R2，并生成引用 R2 URL 的文章页面。
+生成的 PDF URL 会带有源文件修改时间版本号，源 PDF 更新后页面链接会随之变化，避免浏览器继续使用旧缓存。
+脚本成功后会自动提交并推送 `WebNote/PatTianFang.github.io` 仓库，Cloudflare Pages 会根据这次 push 自动部署。
+
+### 4. 部署 Cloudflare Pages
+
+1. 在 Cloudflare Dashboard 进入 **Workers & Pages**。
+2. 创建 Pages 项目并连接 GitHub 仓库 `PatTianFang/PatTianFang.github.io`。
+3. 构建设置：
+   - Framework preset: `None`
+   - Build command: 留空
+   - Build output directory: `/`
+4. `Publish.py` 自动推送 `WebNote/PatTianFang.github.io` 仓库后，Cloudflare Pages 会自动部署。
+
+## 🚀 原 GitHub Pages 部署步骤（旧方案）
+
+如果仍想使用 GitHub Pages，可以参考以下旧流程；但大 PDF 不建议继续提交到 GitHub。
 
 1. **准备仓库**：在 GitHub 上创建一个和GitHub账号同名的新公开仓库（例如名为 `PatTianFang.github.io`）。
 2. **修改为Github名称**：将`PatTianFang.github.io`文件夹名称替换为刚刚创建的仓库名称。
