@@ -723,6 +723,7 @@ def sync_pdf_files():
 
                     site_root_prefix = build_site_root_prefix(post_url)
                     content = content.replace('../../css/style.css', f'{site_root_prefix}css/style.css')
+                    content = content.replace('../../js/theme.js', f'{site_root_prefix}js/theme.js')
                     content = content.replace('../../index.html', f'{site_root_prefix}index.html')
                     content = content.replace('../../about.html', f'{site_root_prefix}about.html')
 
