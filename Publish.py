@@ -725,6 +725,7 @@ def sync_pdf_files():
                     content = content.replace('../../css/style.css', f'{site_root_prefix}css/style.css')
                     content = content.replace('../../js/theme.js', f'{site_root_prefix}js/theme.js')
                     content = content.replace('../../index.html', f'{site_root_prefix}index.html')
+                    content = content.replace('../../records.html', f'{site_root_prefix}records.html')
                     content = content.replace('../../about.html', f'{site_root_prefix}about.html')
 
                     with open(target_html_file, 'w', encoding='utf-8') as f:
