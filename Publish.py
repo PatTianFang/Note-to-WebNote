@@ -1,20 +1,27 @@
 import hashlib
+import html
 import json
 import logging
 import os
+import posixpath
+import re
 import shutil
 import subprocess
 from datetime import datetime
 from urllib import error, request
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 WEBNOTE_ROOT = os.path.join('.', 'WebNote', 'PatTianFang.github.io')
 ROOT_REPO = '.'
 NOTE_ROOT = os.path.join('.', 'Note')
+RECORDS_SOURCE_DIR = os.path.join(NOTE_ROOT, '记录')
+IMAGES_DIR = os.path.join(WEBNOTE_ROOT, 'images')
+RECORDS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'records.json')
 POSTS_BASE_DIR = os.path.join(WEBNOTE_ROOT, 'posts')
 POSTS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'posts.json')
 HTML_TEMPLATE_PATH = os.path.join(POSTS_BASE_DIR, 'demo', 'pdf-embed-demo.html')
 GENERATED_BY = 'Publish.py'
+IMAGE_EXTENSIONS = {'.avif', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp'}
 NOTE_REMOTE_URL = 'https://github.com/PatTianFang/Note.git'
 ROOT_REMOTE_URL = 'https://github.com/PatTianFang/Note-to-WebNote.git'
 NOTE_BRANCH = 'main'
@@ -645,6 +652,567 @@ def update_posts_json(current_posts_by_url, r2_config):
         return False
 
 
+def html_escape(value):
+    return html.escape(str(value), quote=True)
+
+
+def url_path_join(*parts):
+    return '/'.join(quote(str(part).replace('\\', '/'), safe='/-._~') for part in parts)
+
+
+def quote_url_path(path):
+    return quote(str(path).replace('\\', '/'), safe='/-._~')
+
+
+def build_relative_url(source_url, target_url):
+    source_dir = posixpath.dirname(source_url.replace('\\', '/')) or '.'
+    rel_url = posixpath.relpath(target_url.replace('\\', '/'), source_dir)
+    return quote_url_path(rel_url)
+
+
+def parse_record_name(record_name):
+    match = re.match(r'^(\d{8})(.*)$', record_name)
+    if not match:
+        return {
+            'place': record_name,
+            'display_date': '',
+            'iso_date': '',
+        }
+
+    date_part, place = match.groups()
+    try:
+        dt = datetime.strptime(date_part, '%Y%m%d')
+    except ValueError:
+        return {
+            'place': place or record_name,
+            'display_date': '',
+            'iso_date': '',
+        }
+
+    return {
+        'place': place or record_name,
+        'display_date': f'{dt.year}年{dt.month:02d}月{dt.day:02d}日',
+        'iso_date': dt.strftime('%Y-%m-%d'),
+    }
+
+
+def is_image_file(filename):
+    return os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
+
+
+def copy_record_assets(record_dir, target_asset_dir):
+    os.makedirs(target_asset_dir, exist_ok=True)
+    copied_images = []
+
+    for filename in sorted(os.listdir(record_dir)):
+        source_file = os.path.join(record_dir, filename)
+        if not os.path.isfile(source_file) or not is_image_file(filename):
+            continue
+
+        target_file = os.path.join(target_asset_dir, filename)
+        shutil.copy2(source_file, target_file)
+        copied_images.append(filename)
+
+    return copied_images
+
+
+def convert_record_markdown_to_html(markdown_text, record_name, image_filenames):
+    image_names = set(image_filenames)
+    referenced_images = []
+
+    def replace_image(match):
+        image_name = match.group(1).strip()
+        if image_name in image_names:
+            referenced_images.append(image_name)
+            src = url_path_join(record_name, image_name)
+            alt = os.path.splitext(image_name)[0]
+            return f'\n<figure class="record-auto-photo"><img src="{src}" alt="{html_escape(alt)}"></figure>\n'
+        return html_escape(match.group(0))
+
+    converted = re.sub(r'!\[\[([^\]]+)\]\]', replace_image, markdown_text)
+    lines = converted.splitlines()
+    blocks = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith('<figure '):
+            blocks.append(stripped)
+            continue
+
+        if stripped.startswith('# '):
+            blocks.append(f'<h2>{html_escape(stripped[2:].strip())}</h2>')
+            continue
+
+        blocks.append(f'<p>{html_escape(stripped)}</p>')
+
+    for image_name in image_filenames:
+        if image_name in referenced_images:
+            continue
+        src = url_path_join(record_name, image_name)
+        alt = os.path.splitext(image_name)[0]
+        blocks.append(f'<figure class="record-auto-photo"><img src="{src}" alt="{html_escape(alt)}"></figure>')
+
+    return '\n'.join(blocks), referenced_images
+
+
+def split_record_body(body_html):
+    image_blocks = []
+
+    def collect_image(match):
+        image_blocks.append(match.group(0))
+        return ''
+
+    text_html = re.sub(
+        r'\s*<figure class="record-auto-photo">[\s\S]*?</figure>\s*',
+        collect_image,
+        body_html,
+    ).strip()
+
+    return text_html, image_blocks
+
+
+def get_record_markdown(record_dir, record_name):
+    preferred_path = os.path.join(record_dir, f'{record_name}.md')
+    if os.path.isfile(preferred_path):
+        return preferred_path
+
+    markdown_files = [
+        os.path.join(record_dir, filename)
+        for filename in sorted(os.listdir(record_dir))
+        if filename.lower().endswith('.md') and os.path.isfile(os.path.join(record_dir, filename))
+    ]
+    return markdown_files[0] if markdown_files else None
+
+
+def build_record_page(record_name, record_info, body_html, image_count):
+    title = html_escape(record_name)
+    text_html, image_blocks = split_record_body(body_html)
+    intro_html = text_html or '<p>保持热爱，奔赴山海。</p>'
+    gallery_html = '\n'.join(image_blocks) if image_blocks else '<p class="empty-message">暂无图片。</p>'
+    display_date = record_info.get('display_date') or ''
+    place = record_info.get('place') or record_name
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - FangTian's Note</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="../js/theme.js"></script>
+</head>
+<body>
+    <header>
+        <div class="container header-container">
+            <h1><a href="../index.html">FangTian's Note</a></h1>
+            <nav>
+                <a href="../index.html">首页</a>
+                <a href="../records.html">记录</a>
+                <a href="../about.html">关于</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="record-auto-page">
+        <article class="record-auto-layout">
+            <header class="record-auto-header">
+                <p class="records-kicker">Record</p>
+                <h1>{title}</h1>
+                <div class="post-meta">
+                    <span>{html_escape(display_date)}</span>
+                    <span class="post-category">记录</span>
+                </div>
+            </header>
+
+            <section class="record-auto-summary" aria-label="记录信息">
+                <div class="record-auto-intro">
+                    {intro_html}
+                </div>
+                <div class="record-facts">
+                    <div>
+                        <span>拍摄地点</span>
+                        <strong>{html_escape(place)}</strong>
+                    </div>
+                    <div>
+                        <span>图片</span>
+                        <strong>{image_count} 张</strong>
+                    </div>
+                    <div>
+                        <span>时间</span>
+                        <strong>{html_escape(display_date or '未知')}</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="record-auto-gallery" aria-label="照片">
+                {gallery_html}
+            </section>
+            <div class="record-lightbox" aria-hidden="true">
+                <button class="record-lightbox-close" type="button" aria-label="关闭">×</button>
+                <button class="record-lightbox-nav record-lightbox-prev" type="button" aria-label="上一张">‹</button>
+                <img class="record-lightbox-image" src="" alt="">
+                <button class="record-lightbox-nav record-lightbox-next" type="button" aria-label="下一张">›</button>
+                <div class="record-lightbox-toolbar">
+                    <span class="record-lightbox-count"></span>
+                    <a class="record-lightbox-download" href="" download>下载照片</a>
+                </div>
+            </div>
+        </article>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 FangTian's Note | 基于纯 HTML/CSS/JS 构建</p>
+        </div>
+    </footer>
+    <script>
+    (function () {{
+        const images = Array.from(document.querySelectorAll('.record-auto-photo img'));
+        const lightbox = document.querySelector('.record-lightbox');
+        if (!images.length || !lightbox) return;
+
+        const imageEl = lightbox.querySelector('.record-lightbox-image');
+        const closeBtn = lightbox.querySelector('.record-lightbox-close');
+        const prevBtn = lightbox.querySelector('.record-lightbox-prev');
+        const nextBtn = lightbox.querySelector('.record-lightbox-next');
+        const countEl = lightbox.querySelector('.record-lightbox-count');
+        const downloadEl = lightbox.querySelector('.record-lightbox-download');
+        let activeIndex = 0;
+
+        function show(index) {{
+            activeIndex = (index + images.length) % images.length;
+            const source = images[activeIndex];
+            const src = source.currentSrc || source.src;
+            imageEl.src = src;
+            imageEl.alt = source.alt || '';
+            countEl.textContent = `${{activeIndex + 1}} / ${{images.length}}`;
+            downloadEl.href = src;
+            downloadEl.download = source.alt || 'record-photo';
+        }}
+
+        function open(index) {{
+            show(index);
+            lightbox.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('record-lightbox-open');
+            closeBtn.focus();
+        }}
+
+        function close() {{
+            lightbox.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('record-lightbox-open');
+            imageEl.removeAttribute('src');
+        }}
+
+        images.forEach((image, index) => {{
+            image.addEventListener('click', () => open(index));
+            image.setAttribute('tabindex', '0');
+            image.addEventListener('keydown', event => {{
+                if (event.key === 'Enter' || event.key === ' ') {{
+                    event.preventDefault();
+                    open(index);
+                }}
+            }});
+        }});
+
+        closeBtn.addEventListener('click', close);
+        prevBtn.addEventListener('click', () => show(activeIndex - 1));
+        nextBtn.addEventListener('click', () => show(activeIndex + 1));
+        lightbox.addEventListener('click', event => {{
+            if (event.target === lightbox) close();
+        }});
+        document.addEventListener('keydown', event => {{
+            if (lightbox.getAttribute('aria-hidden') === 'true') return;
+            if (event.key === 'Escape') close();
+            if (event.key === 'ArrowLeft') show(activeIndex - 1);
+            if (event.key === 'ArrowRight') show(activeIndex + 1);
+        }});
+    }}());
+    </script>
+</body>
+</html>
+'''
+
+
+def cleanup_stale_record_pages(current_urls):
+    if not os.path.exists(RECORDS_JSON_PATH):
+        return True
+
+    ok = True
+    try:
+        with open(RECORDS_JSON_PATH, 'r', encoding='utf-8') as f:
+            existing_records = json.load(f)
+    except Exception as e:
+        logging.warning(f"读取 records.json 失败，跳过旧记录清理: {e}")
+        return False
+
+    for record in existing_records:
+        if record.get('generated_by') != GENERATED_BY:
+            continue
+
+        record_url = record.get('url', '')
+        if not record_url or record_url in current_urls:
+            continue
+
+        record_id = record.get('id', '')
+        html_path = os.path.join(WEBNOTE_ROOT, *record_url.split('/'))
+        asset_dir = os.path.join(IMAGES_DIR, record_id) if record_id else ''
+
+        delete_file_if_exists(html_path)
+        if asset_dir and os.path.isdir(asset_dir):
+            ok = remove_path_if_exists(asset_dir) and ok
+
+    return ok
+
+
+def sync_record_pages():
+    if not os.path.isdir(RECORDS_SOURCE_DIR):
+        logging.info(f"记录目录不存在，跳过记录页生成: {RECORDS_SOURCE_DIR}")
+        return True
+
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(RECORDS_JSON_PATH), exist_ok=True)
+    records = []
+    current_urls = set()
+
+    for record_name in sorted(os.listdir(RECORDS_SOURCE_DIR)):
+        record_dir = os.path.join(RECORDS_SOURCE_DIR, record_name)
+        if not os.path.isdir(record_dir):
+            continue
+
+        try:
+            target_asset_dir = os.path.join(IMAGES_DIR, record_name)
+            image_filenames = copy_record_assets(record_dir, target_asset_dir)
+            markdown_path = get_record_markdown(record_dir, record_name)
+            markdown_text = ''
+            if markdown_path:
+                with open(markdown_path, 'r', encoding='utf-8') as f:
+                    markdown_text = f.read()
+
+            body_html, _referenced_images = convert_record_markdown_to_html(
+                markdown_text,
+                record_name,
+                image_filenames,
+            )
+            if not body_html:
+                body_html = '<p>暂无文字记录。</p>'
+
+            st = os.stat(markdown_path or record_dir)
+            record_info = parse_record_name(record_name)
+            create_time_str = record_info.get('iso_date') or datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d')
+            display_date = record_info.get('display_date') or create_time_str
+            target_html_file = os.path.join(IMAGES_DIR, f'{record_name}.html')
+            with open(target_html_file, 'w', encoding='utf-8') as f:
+                f.write(build_record_page(record_name, record_info, body_html, len(image_filenames)))
+
+            first_image = image_filenames[0] if image_filenames else ''
+            records.append({
+                'id': record_name,
+                'title': record_name,
+                'date': create_time_str,
+                'display_date': display_date,
+                'place': record_info.get('place') or record_name,
+                'url': url_path_join('images', f'{record_name}.html'),
+                'excerpt': f'{display_date}，拍摄地点：{record_info.get("place") or record_name}，共 {len(image_filenames)} 张图片。',
+                'cover': url_path_join('images', record_name, first_image) if first_image else '',
+                'generated_by': GENERATED_BY,
+            })
+            current_urls.add(records[-1]['url'])
+            logging.info(f"记录页生成成功: {target_html_file}")
+        except Exception as e:
+            logging.error(f"处理记录文件夹失败 [{record_name}]: {e}")
+            return False
+
+    if not cleanup_stale_record_pages(current_urls):
+        return False
+
+    records.sort(key=lambda item: item.get('date', ''), reverse=True)
+    with open(RECORDS_JSON_PATH, 'w', encoding='utf-8') as f:
+        json.dump(records, f, ensure_ascii=False, indent=4)
+    logging.info(f"更新 records.json 成功，共 {len(records)} 条记录")
+    return True
+
+
+PAGE_NAV_PATTERN = re.compile(
+    r'\s*<!-- BEGIN PUBLISH PAGE NAV -->[\s\S]*?<!-- END PUBLISH PAGE NAV -->\s*',
+    re.IGNORECASE,
+)
+
+
+def strip_html_tags(value):
+    return re.sub(r'<[^>]+>', '', str(value))
+
+
+def clean_html_text(value):
+    return html.unescape(strip_html_tags(value)).replace('\xa0', ' ').strip()
+
+
+def extract_html_metadata(html_content, fallback_title):
+    clean_content = PAGE_NAV_PATTERN.sub('', html_content)
+    scoped_content = clean_content
+    article_match = re.search(r'<article[^>]*>([\s\S]*?)</article>', clean_content, re.IGNORECASE)
+    main_match = re.search(r'<main[^>]*>([\s\S]*?)</main>', clean_content, re.IGNORECASE)
+    if article_match:
+        scoped_content = article_match.group(1)
+    elif main_match:
+        scoped_content = main_match.group(1)
+
+    title = ''
+    h1_match = re.search(r'<h1[^>]*>([\s\S]*?)</h1>', scoped_content, re.IGNORECASE)
+    if h1_match:
+        title = clean_html_text(h1_match.group(1))
+
+    if not title:
+        title_match = re.search(r'<title[^>]*>([\s\S]*?)</title>', clean_content, re.IGNORECASE)
+        if title_match:
+            title = clean_html_text(title_match.group(1)).replace(" - FangTian's Note", '')
+
+    excerpt = ''
+    p_match = re.search(r'<p[^>]*>([\s\S]*?)</p>', scoped_content, re.IGNORECASE)
+    if p_match:
+        excerpt = clean_html_text(p_match.group(1))
+
+    return {
+        'title': title or fallback_title,
+        'excerpt': excerpt[:140],
+    }
+
+
+def load_page_metadata():
+    metadata = {}
+    for json_path in (POSTS_JSON_PATH, RECORDS_JSON_PATH):
+        if not os.path.exists(json_path):
+            continue
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                items = json.load(f)
+        except Exception as e:
+            logging.warning(f"读取页面索引失败 [{json_path}]: {e}")
+            continue
+
+        for item in items:
+            url = item.get('url', '').replace('\\', '/')
+            if not url:
+                continue
+            metadata[url] = item
+            metadata[unquote(url)] = item
+    return metadata
+
+
+def collect_html_pages(base_dir, metadata):
+    pages = []
+    if not os.path.isdir(base_dir):
+        return pages
+
+    for root, _dirs, files in os.walk(base_dir):
+        for filename in files:
+            if not filename.lower().endswith('.html'):
+                continue
+
+            file_path = os.path.join(root, filename)
+            rel_url = os.path.relpath(file_path, WEBNOTE_ROOT).replace(os.sep, '/')
+            meta = metadata.get(rel_url, {})
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+            except Exception as e:
+                logging.warning(f"读取 HTML 失败 [{file_path}]: {e}")
+                continue
+
+            fallback = extract_html_metadata(html_content, os.path.splitext(filename)[0])
+            pages.append({
+                'file_path': file_path,
+                'url': rel_url,
+                'title': meta.get('title') or fallback['title'],
+                'date': meta.get('display_date') or meta.get('date') or '',
+                'category': meta.get('category') or meta.get('place') or '',
+                'excerpt': meta.get('excerpt') or fallback['excerpt'],
+            })
+
+    pages.sort(key=lambda item: (item.get('date') or '', item.get('title') or '', item.get('url') or ''))
+    return pages
+
+
+def build_page_nav_card(source_url, target, label):
+    if not target:
+        return f'''<span class="page-neighbor-card page-neighbor-card-disabled">
+                    <span class="page-neighbor-label">{label}</span>
+                    <strong>没有更多内容</strong>
+                </span>'''
+
+    href = build_relative_url(source_url, target['url'])
+    meta_parts = [target.get('date', ''), target.get('category', '')]
+    meta_text = ' · '.join(part for part in meta_parts if part)
+    excerpt = target.get('excerpt', '')
+
+    return f'''<a class="page-neighbor-card" href="{html_escape(href)}">
+                    <span class="page-neighbor-label">{label}</span>
+                    <strong>{html_escape(target.get('title') or '未命名页面')}</strong>
+                    {f'<span class="page-neighbor-meta">{html_escape(meta_text)}</span>' if meta_text else ''}
+                    {f'<p>{html_escape(excerpt)}</p>' if excerpt else ''}
+                </a>'''
+
+
+def build_page_navigation_html(source_url, prev_page, next_page):
+    return f'''
+<!-- BEGIN PUBLISH PAGE NAV -->
+<nav class="page-neighbor-nav" aria-label="上一篇和下一篇">
+    {build_page_nav_card(source_url, prev_page, '上一篇')}
+    {build_page_nav_card(source_url, next_page, '下一篇')}
+</nav>
+<!-- END PUBLISH PAGE NAV -->
+'''
+
+
+def inject_page_navigation(file_path, nav_html):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        logging.warning(f"读取页面失败 [{file_path}]: {e}")
+        return False
+
+    content = PAGE_NAV_PATTERN.sub('\n', content)
+    insert_match = list(re.finditer(r'</article>', content, re.IGNORECASE))
+    if insert_match:
+        match = insert_match[-1]
+        content = content[:match.start()] + nav_html + content[match.start():]
+    else:
+        match = re.search(r'</main>', content, re.IGNORECASE)
+        if not match:
+            logging.warning(f"未找到可插入导航的位置: {file_path}")
+            return False
+        content = content[:match.start()] + nav_html + content[match.start():]
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return True
+
+
+def sync_page_navigation():
+    metadata = load_page_metadata()
+    page_groups = [
+        collect_html_pages(IMAGES_DIR, metadata),
+        collect_html_pages(POSTS_BASE_DIR, metadata),
+    ]
+
+    ok = True
+    injected_count = 0
+    for pages in page_groups:
+        for index, page in enumerate(pages):
+            prev_page = pages[index - 1] if index > 0 else None
+            next_page = pages[index + 1] if index + 1 < len(pages) else None
+            nav_html = build_page_navigation_html(page['url'], prev_page, next_page)
+            if inject_page_navigation(page['file_path'], nav_html):
+                injected_count += 1
+            else:
+                ok = False
+
+    logging.info(f"页面上一篇/下一篇导航更新完成，共 {injected_count} 个页面")
+    return ok
+
+
 def sync_pdf_files():
     source_base_dir = os.path.join('.', 'Note')
 
@@ -760,7 +1328,7 @@ if __name__ == '__main__':
     setup_logging()
     logging.info('开始同步 PDF 文件...')
     cleanup_local_artifacts()
-    if sync_pdf_files() and cleanup_local_artifacts() and deploy_git_repositories():
+    if sync_record_pages() and sync_pdf_files() and sync_page_navigation() and cleanup_local_artifacts() and deploy_git_repositories():
         logging.info('同步完成。')
     else:
         logging.error('同步未完成。')
