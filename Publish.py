@@ -24,6 +24,11 @@ HTML_TEMPLATE_PATH = os.path.join(POSTS_BASE_DIR, 'demo', 'pdf-embed-demo.html')
 STYLE_CSS_PATH = os.path.join(WEBNOTE_ROOT, 'css', 'style.css')
 GENERATED_BY = 'Publish.py'
 IMAGE_EXTENSIONS = {'.avif', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp'}
+RECORD_PLACE_COORDS = {
+    '青岛': [36.0662, 120.3826],
+    '厦门': [24.4798, 118.0894],
+    '天津': [39.3434, 117.3616],
+}
 NOTE_REMOTE_URL = 'https://github.com/PatTianFang/Note.git'
 ROOT_REMOTE_URL = 'https://github.com/PatTianFang/Note-to-WebNote.git'
 NOTE_BRANCH = 'main'
@@ -762,6 +767,10 @@ def parse_record_name(record_name):
     }
 
 
+def get_record_coords(place):
+    return RECORD_PLACE_COORDS.get(place)
+
+
 def is_image_file(filename):
     return os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
 
@@ -1101,14 +1110,16 @@ def sync_record_pages():
                 f.write(build_record_page(record_name, record_info, body_html, len(image_filenames)))
 
             first_image = image_filenames[0] if image_filenames else ''
+            record_place = record_info.get('place') or record_name
             records.append({
                 'id': record_name,
                 'title': record_name,
                 'date': create_time_str,
                 'display_date': display_date,
-                'place': record_info.get('place') or record_name,
+                'place': record_place,
+                'coords': get_record_coords(record_place),
                 'url': url_path_join('images', f'{record_name}.html'),
-                'excerpt': f'{display_date}，拍摄地点：{record_info.get("place") or record_name}，共 {len(image_filenames)} 张图片。',
+                'excerpt': f'{display_date}，拍摄地点：{record_place}，共 {len(image_filenames)} 张图片。',
                 'cover': image_urls.get(first_image, '') if first_image else '',
                 'generated_by': GENERATED_BY,
             })
