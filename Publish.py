@@ -18,6 +18,7 @@ NOTE_ROOT = os.path.join('.', 'Note')
 RECORDS_SOURCE_DIR = os.path.join(NOTE_ROOT, '记录')
 IMAGES_DIR = os.path.join(WEBNOTE_ROOT, 'images')
 RECORDS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'records.json')
+RECORDS_DATA_JS_PATH = os.path.join(WEBNOTE_ROOT, 'js', 'records-data.js')
 POSTS_BASE_DIR = os.path.join(WEBNOTE_ROOT, 'posts')
 POSTS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'posts.json')
 HTML_TEMPLATE_PATH = os.path.join(POSTS_BASE_DIR, 'demo', 'pdf-embed-demo.html')
@@ -1141,6 +1142,10 @@ def sync_record_pages():
     records.sort(key=lambda item: item.get('date', ''), reverse=True)
     with open(RECORDS_JSON_PATH, 'w', encoding='utf-8') as f:
         json.dump(records, f, ensure_ascii=False, indent=4)
+    with open(RECORDS_DATA_JS_PATH, 'w', encoding='utf-8') as f:
+        f.write('window.WEBNOTE_RECORDS = ')
+        json.dump(records, f, ensure_ascii=False, indent=4)
+        f.write(';\n')
     prune_r2_manifest(r2_manifest, current_image_object_keys, r2_config, prefixes=['images/'])
     save_r2_manifest(r2_manifest)
     logging.info(f"更新 records.json 成功，共 {len(records)} 条记录")
