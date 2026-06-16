@@ -2,6 +2,7 @@ import hashlib
 import html
 import json
 import logging
+import mimetypes
 import os
 import posixpath
 import re
@@ -168,6 +169,10 @@ def build_r2_object_key_from_source(source_file, source_base_dir):
     return f"pdfs/{rel_path}"
 
 
+def build_record_image_object_key(record_name, image_name):
+    return f"images/{record_name}/{image_name}"
+
+
 def build_post_url_from_source(source_file, source_base_dir):
     rel_path = os.path.relpath(source_file, source_base_dir)
     rel_html_path = f"{os.path.splitext(rel_path)[0]}.html"
@@ -180,12 +185,16 @@ def build_site_root_prefix(post_url):
     return '../' * depth
 
 
-def build_public_pdf_url(public_base_url, object_key, version=None):
+def build_public_r2_url(public_base_url, object_key, version=None):
     encoded_key = quote(object_key.replace('\\', '/'), safe='/-._~')
     public_url = f"{public_base_url.rstrip('/')}/{encoded_key}"
     if version is not None:
         public_url = f"{public_url}?v={quote(str(version), safe='')}"
     return public_url
+
+
+def build_public_pdf_url(public_base_url, object_key, version=None):
+    return build_public_r2_url(public_base_url, object_key, version)
 
 
 def load_r2_manifest():
@@ -227,8 +236,15 @@ def update_manifest_entry(manifest, object_key, source_file):
     manifest[object_key] = build_source_signature(source_file)
 
 
-def prune_r2_manifest(manifest, current_object_keys, r2_config):
-    stale_object_keys = sorted(set(manifest) - current_object_keys)
+def prune_r2_manifest(manifest, current_object_keys, r2_config, prefixes=None):
+    manifest_keys = set(manifest)
+    if prefixes:
+        manifest_keys = {
+            object_key
+            for object_key in manifest_keys
+            if any(object_key.startswith(prefix) for prefix in prefixes)
+        }
+    stale_object_keys = sorted(manifest_keys - current_object_keys)
     for object_key in stale_object_keys:
         if delete_r2_object(r2_config, object_key):
             manifest.pop(object_key, None)
@@ -311,15 +327,20 @@ def run_wrangler(r2_config, args, action):
         return False
 
 
-def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
+def guess_content_type(source_file):
+    content_type, _encoding = mimetypes.guess_type(source_file)
+    return content_type or 'application/octet-stream'
+
+
+def upload_file_to_r2(r2_config, source_file, object_key, manifest, content_type, label):
     if manifest_entry_matches_source(manifest, object_key, source_file):
-        logging.info(f"PDF unchanged locally, skipped R2 check: {object_key}")
+        logging.info(f"{label} unchanged locally, skipped R2 check: {object_key}")
         return True
 
-    public_url = build_public_pdf_url(r2_config['public_base_url'], object_key)
+    public_url = build_public_r2_url(r2_config['public_base_url'], object_key)
     if r2_object_matches_source(source_file, public_url):
         update_manifest_entry(manifest, object_key, source_file)
-        logging.info(f"PDF unchanged in R2, skipped upload: {object_key}")
+        logging.info(f"{label} unchanged in R2, skipped upload: {object_key}")
         return True
 
     args = [
@@ -330,7 +351,7 @@ def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
         '--file',
         source_file,
         '--content-type',
-        'application/pdf',
+        content_type,
         '--cache-control',
         r2_config['cache_control'],
         '--remote',
@@ -346,6 +367,28 @@ def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
         return True
 
     return False
+
+
+def upload_pdf_to_r2(r2_config, source_file, object_key, manifest):
+    return upload_file_to_r2(
+        r2_config,
+        source_file,
+        object_key,
+        manifest,
+        'application/pdf',
+        'PDF',
+    )
+
+
+def upload_image_to_r2(r2_config, source_file, object_key, manifest):
+    return upload_file_to_r2(
+        r2_config,
+        source_file,
+        object_key,
+        manifest,
+        guess_content_type(source_file),
+        'Image',
+    )
 
 
 def delete_r2_object(r2_config, object_key):
@@ -739,17 +782,18 @@ def copy_record_assets(record_dir, target_asset_dir):
     return copied_images
 
 
-def convert_record_markdown_to_html(markdown_text, record_name, image_filenames):
+def convert_record_markdown_to_html(markdown_text, record_name, image_filenames, image_urls=None):
     image_names = set(image_filenames)
+    image_urls = image_urls or {}
     referenced_images = []
 
     def replace_image(match):
         image_name = match.group(1).strip()
         if image_name in image_names:
             referenced_images.append(image_name)
-            src = url_path_join(record_name, image_name)
+            src = image_urls.get(image_name) or url_path_join(record_name, image_name)
             alt = os.path.splitext(image_name)[0]
-            return f'\n<figure class="record-auto-photo"><img src="{src}" alt="{html_escape(alt)}"></figure>\n'
+            return f'\n<figure class="record-auto-photo"><img src="{html_escape(src)}" alt="{html_escape(alt)}"></figure>\n'
         return html_escape(match.group(0))
 
     converted = re.sub(r'!\[\[([^\]]+)\]\]', replace_image, markdown_text)
@@ -774,9 +818,9 @@ def convert_record_markdown_to_html(markdown_text, record_name, image_filenames)
     for image_name in image_filenames:
         if image_name in referenced_images:
             continue
-        src = url_path_join(record_name, image_name)
+        src = image_urls.get(image_name) or url_path_join(record_name, image_name)
         alt = os.path.splitext(image_name)[0]
-        blocks.append(f'<figure class="record-auto-photo"><img src="{src}" alt="{html_escape(alt)}"></figure>')
+        blocks.append(f'<figure class="record-auto-photo"><img src="{html_escape(src)}" alt="{html_escape(alt)}"></figure>')
 
     return '\n'.join(blocks), referenced_images
 
@@ -994,10 +1038,17 @@ def sync_record_pages():
         logging.info(f"记录目录不存在，跳过记录页生成: {RECORDS_SOURCE_DIR}")
         return True
 
+    r2_config = get_r2_config()
+    if not r2_config:
+        return False
+
     os.makedirs(IMAGES_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(RECORDS_JSON_PATH), exist_ok=True)
+    r2_manifest = load_r2_manifest()
     records = []
     current_urls = set()
+    current_image_object_keys = set()
+    had_errors = False
 
     for record_name in sorted(os.listdir(RECORDS_SOURCE_DIR)):
         record_dir = os.path.join(RECORDS_SOURCE_DIR, record_name)
@@ -1007,6 +1058,25 @@ def sync_record_pages():
         try:
             target_asset_dir = os.path.join(IMAGES_DIR, record_name)
             image_filenames = copy_record_assets(record_dir, target_asset_dir)
+            image_urls = {}
+            for image_name in image_filenames:
+                source_image = os.path.join(record_dir, image_name)
+                object_key = build_record_image_object_key(record_name, image_name)
+                current_image_object_keys.add(object_key)
+                if not upload_image_to_r2(r2_config, source_image, object_key, r2_manifest):
+                    had_errors = True
+                    break
+
+                image_version = int(os.path.getmtime(source_image))
+                image_urls[image_name] = build_public_r2_url(
+                    r2_config['public_base_url'],
+                    object_key,
+                    image_version,
+                )
+
+            if had_errors:
+                continue
+
             markdown_path = get_record_markdown(record_dir, record_name)
             markdown_text = ''
             if markdown_path:
@@ -1017,6 +1087,7 @@ def sync_record_pages():
                 markdown_text,
                 record_name,
                 image_filenames,
+                image_urls,
             )
             if not body_html:
                 body_html = '<p>暂无文字记录。</p>'
@@ -1038,7 +1109,7 @@ def sync_record_pages():
                 'place': record_info.get('place') or record_name,
                 'url': url_path_join('images', f'{record_name}.html'),
                 'excerpt': f'{display_date}，拍摄地点：{record_info.get("place") or record_name}，共 {len(image_filenames)} 张图片。',
-                'cover': url_path_join('images', record_name, first_image) if first_image else '',
+                'cover': image_urls.get(first_image, '') if first_image else '',
                 'generated_by': GENERATED_BY,
             })
             current_urls.add(records[-1]['url'])
@@ -1047,12 +1118,20 @@ def sync_record_pages():
             logging.error(f"处理记录文件夹失败 [{record_name}]: {e}")
             return False
 
+    if had_errors:
+        save_r2_manifest(r2_manifest)
+        logging.error("存在记录图片上传失败，已跳过 records.json 更新以保护现有索引")
+        return False
+
     if not cleanup_stale_record_pages(current_urls):
+        save_r2_manifest(r2_manifest)
         return False
 
     records.sort(key=lambda item: item.get('date', ''), reverse=True)
     with open(RECORDS_JSON_PATH, 'w', encoding='utf-8') as f:
         json.dump(records, f, ensure_ascii=False, indent=4)
+    prune_r2_manifest(r2_manifest, current_image_object_keys, r2_config, prefixes=['images/'])
+    save_r2_manifest(r2_manifest)
     logging.info(f"更新 records.json 成功，共 {len(records)} 条记录")
     return True
 
@@ -1343,7 +1422,7 @@ def sync_pdf_files():
         save_r2_manifest(r2_manifest)
         return False
 
-    prune_r2_manifest(r2_manifest, current_object_keys, r2_config)
+    prune_r2_manifest(r2_manifest, current_object_keys, r2_config, prefixes=['pdfs/'])
     save_r2_manifest(r2_manifest)
     cleanup_empty_directories(POSTS_BASE_DIR)
     return True
