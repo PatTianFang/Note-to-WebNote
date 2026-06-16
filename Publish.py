@@ -772,6 +772,28 @@ def get_record_coords(place):
     return RECORD_PLACE_COORDS.get(place)
 
 
+def build_pdf_viewer_html(pdf_url, root_prefix):
+    return f'''<section class="pdf-viewer" data-pdf-viewer data-pdf-url="{html_escape(pdf_url)}" data-root-prefix="{html_escape(root_prefix)}">
+                        <div class="pdf-viewer-toolbar">
+                            <div class="pdf-viewer-pages">
+                                <button type="button" data-pdf-prev>上一页</button>
+                                <span><span data-pdf-current>--</span> / <span data-pdf-total>--</span></span>
+                                <button type="button" data-pdf-next>下一页</button>
+                            </div>
+                            <div class="pdf-viewer-actions">
+                                <button type="button" data-pdf-zoom-out>缩小</button>
+                                <button type="button" data-pdf-zoom-in>放大</button>
+                                <a href="{html_escape(pdf_url)}" target="_blank" rel="noopener">打开 PDF</a>
+                                <a href="{html_escape(pdf_url)}" download>下载 PDF</a>
+                            </div>
+                        </div>
+                        <div class="pdf-viewer-stage">
+                            <canvas data-pdf-canvas></canvas>
+                            <p class="pdf-viewer-status" data-pdf-status>正在加载 PDF...</p>
+                        </div>
+                    </section>'''
+
+
 def is_image_file(filename):
     return os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
 
@@ -1396,12 +1418,9 @@ def sync_pdf_files():
                         continue
                     logging.info(f"PDF 上传 R2 成功: {object_key}")
 
-                    embed_tag = (
-                        f'<embed src="{pdf_url}" '
-                        f'type="application/pdf" width="100%" height="800px">'
-                    )
-
                     content = html_template
+                    site_root_prefix = build_site_root_prefix(post_url)
+                    embed_tag = build_pdf_viewer_html(pdf_url, site_root_prefix)
                     content = content.replace('模板修改1', pdf_name_no_ext)
                     content = content.replace('模板修改2', create_time_str)
                     content = content.replace('模板修改3', item)
@@ -1409,9 +1428,9 @@ def sync_pdf_files():
                     content = content.replace('模板修改5', embed_tag)
                     content = content.replace('模板修改6', pdf_url)
 
-                    site_root_prefix = build_site_root_prefix(post_url)
                     content = content.replace('../../css/style.css', build_css_href_for_url(post_url))
                     content = content.replace('../../js/theme.js', f'{site_root_prefix}js/theme.js')
+                    content = content.replace('../../js/pdf-viewer.js', f'{site_root_prefix}js/pdf-viewer.js')
                     content = content.replace('../../index.html', f'{site_root_prefix}index.html')
                     content = content.replace('../../records.html', f'{site_root_prefix}records.html')
                     content = content.replace('../../about.html', f'{site_root_prefix}about.html')
