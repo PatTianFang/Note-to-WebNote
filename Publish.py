@@ -20,6 +20,7 @@ RECORDS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'records.json')
 POSTS_BASE_DIR = os.path.join(WEBNOTE_ROOT, 'posts')
 POSTS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'posts.json')
 HTML_TEMPLATE_PATH = os.path.join(POSTS_BASE_DIR, 'demo', 'pdf-embed-demo.html')
+STYLE_CSS_PATH = os.path.join(WEBNOTE_ROOT, 'css', 'style.css')
 GENERATED_BY = 'Publish.py'
 IMAGE_EXTENSIONS = {'.avif', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp'}
 NOTE_REMOTE_URL = 'https://github.com/PatTianFang/Note.git'
@@ -670,6 +671,28 @@ def build_relative_url(source_url, target_url):
     return quote_url_path(rel_url)
 
 
+def get_style_version():
+    try:
+        return str(int(os.path.getmtime(STYLE_CSS_PATH)))
+    except OSError:
+        return datetime.now().strftime('%Y%m%d%H%M%S')
+
+
+def build_css_href_for_url(page_url):
+    return f"{build_relative_url(page_url, 'css/style.css')}?v={get_style_version()}"
+
+
+def refresh_css_href(content, page_url):
+    css_href = html_escape(build_css_href_for_url(page_url))
+    return re.sub(
+        r'<link\s+rel="stylesheet"\s+href="[^"]*css/style\.css(?:\?v=[^"]*)?">',
+        f'<link rel="stylesheet" href="{css_href}">',
+        content,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
 def parse_record_name(record_name):
     match = re.match(r'^(\d{8})(.*)$', record_name)
     if not match:
@@ -800,7 +823,7 @@ def build_record_page(record_name, record_info, body_html, image_count):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - FangTian's Note</title>
-    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="{html_escape(build_css_href_for_url(f'images/{record_name}.html'))}">
     <script src="../js/theme.js"></script>
 </head>
 <body>
@@ -1165,7 +1188,7 @@ def build_page_navigation_html(source_url, prev_page, next_page):
 '''
 
 
-def inject_page_navigation(file_path, nav_html):
+def inject_page_navigation(file_path, page_url, nav_html):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -1184,6 +1207,8 @@ def inject_page_navigation(file_path, nav_html):
             logging.warning(f"未找到可插入导航的位置: {file_path}")
             return False
         content = content[:match.start()] + nav_html + content[match.start():]
+
+    content = refresh_css_href(content, page_url)
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(content)
@@ -1204,7 +1229,7 @@ def sync_page_navigation():
             prev_page = pages[index - 1] if index > 0 else None
             next_page = pages[index + 1] if index + 1 < len(pages) else None
             nav_html = build_page_navigation_html(page['url'], prev_page, next_page)
-            if inject_page_navigation(page['file_path'], nav_html):
+            if inject_page_navigation(page['file_path'], page['url'], nav_html):
                 injected_count += 1
             else:
                 ok = False
@@ -1290,7 +1315,7 @@ def sync_pdf_files():
                     content = content.replace('模板修改6', pdf_url)
 
                     site_root_prefix = build_site_root_prefix(post_url)
-                    content = content.replace('../../css/style.css', f'{site_root_prefix}css/style.css')
+                    content = content.replace('../../css/style.css', build_css_href_for_url(post_url))
                     content = content.replace('../../js/theme.js', f'{site_root_prefix}js/theme.js')
                     content = content.replace('../../index.html', f'{site_root_prefix}index.html')
                     content = content.replace('../../records.html', f'{site_root_prefix}records.html')
