@@ -776,11 +776,13 @@ def build_pdf_viewer_html(pdf_url, root_prefix):
     return f'''<section class="pdf-viewer" data-pdf-viewer data-pdf-url="{html_escape(pdf_url)}" data-root-prefix="{html_escape(root_prefix)}">
                         <div class="pdf-viewer-toolbar">
                             <div class="pdf-viewer-pages">
-                                <button type="button" data-pdf-prev>上一页</button>
+                                <button type="button" data-pdf-mode-list>纵向列表</button>
+                                <button type="button" data-pdf-mode-single>单页翻页</button>
                                 <span><span data-pdf-current>--</span> / <span data-pdf-total>--</span></span>
-                                <button type="button" data-pdf-next>下一页</button>
                             </div>
                             <div class="pdf-viewer-actions">
+                                <button type="button" data-pdf-prev>上一页</button>
+                                <button type="button" data-pdf-next>下一页</button>
                                 <button type="button" data-pdf-zoom-out>缩小</button>
                                 <button type="button" data-pdf-zoom-in>放大</button>
                                 <a href="{html_escape(pdf_url)}" target="_blank" rel="noopener">打开 PDF</a>
@@ -788,7 +790,10 @@ def build_pdf_viewer_html(pdf_url, root_prefix):
                             </div>
                         </div>
                         <div class="pdf-viewer-stage">
-                            <canvas data-pdf-canvas></canvas>
+                            <div class="pdf-viewer-pages-list" data-pdf-pages></div>
+                            <div class="pdf-viewer-single" data-pdf-single hidden>
+                                <canvas data-pdf-canvas></canvas>
+                            </div>
                             <p class="pdf-viewer-status" data-pdf-status>正在加载 PDF...</p>
                         </div>
                     </section>'''
