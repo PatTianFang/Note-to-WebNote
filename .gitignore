@@ -61,6 +61,7 @@ Publish.spec
 Note/
 Problems/
 Problem*.md
+MIGRATION.md
 
 # Generated PDFs are uploaded to R2, not committed with the site.
 WebNote/**/pdfs/
