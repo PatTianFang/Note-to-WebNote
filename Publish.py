@@ -731,6 +731,19 @@ def build_css_href_for_url(page_url):
     return f"{build_relative_url(page_url, 'css/style.css')}?v={get_style_version()}"
 
 
+def build_recall_href_for_url(page_url):
+    return build_relative_url(page_url, 'recall/university/')
+
+
+def build_footer_html(page_url):
+    recall_href = html_escape(build_recall_href_for_url(page_url))
+    return f'''<footer>
+        <div class="container">
+            <p>&copy; 2026 FangTian's Note | 基于纯 HTML/CSS/JS 构建 | <a href="{recall_href}">回忆</a></p>
+        </div>
+    </footer>'''
+
+
 def refresh_css_href(content, page_url):
     css_href = html_escape(build_css_href_for_url(page_url))
     return re.sub(
@@ -740,6 +753,23 @@ def refresh_css_href(content, page_url):
         count=1,
         flags=re.IGNORECASE,
     )
+
+
+def refresh_footer(content, page_url):
+    footer_html = build_footer_html(page_url)
+    updated, count = re.subn(
+        r'<footer>[\s\S]*?</footer>',
+        footer_html,
+        content,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return updated if count else content
+
+
+def refresh_common_page_chrome(content, page_url):
+    content = refresh_css_href(content, page_url)
+    return refresh_footer(content, page_url)
 
 
 def parse_record_name(record_name):
@@ -966,11 +996,7 @@ def build_record_page(record_name, record_info, body_html, image_count):
         </article>
     </main>
 
-    <footer>
-        <div class="container">
-            <p>&copy; 2026 FangTian's Note | 基于纯 HTML/CSS/JS 构建</p>
-        </div>
-    </footer>
+    {build_footer_html(f'images/{record_name}.html')}
     <script>
     (function () {{
         const images = Array.from(document.querySelectorAll('.record-auto-photo img'));
@@ -1360,6 +1386,53 @@ def sync_page_navigation():
     return ok
 
 
+def iter_site_html_pages():
+    include_roots = [WEBNOTE_ROOT, IMAGES_DIR, POSTS_BASE_DIR]
+    seen = set()
+    for base_dir in include_roots:
+        if not os.path.isdir(base_dir):
+            continue
+        for root, _dirs, files in os.walk(base_dir):
+            for filename in files:
+                if not filename.lower().endswith('.html'):
+                    continue
+                file_path = os.path.join(root, filename)
+                abs_path = os.path.abspath(file_path)
+                if abs_path in seen:
+                    continue
+                seen.add(abs_path)
+                page_url = os.path.relpath(file_path, WEBNOTE_ROOT).replace(os.sep, '/')
+                yield file_path, page_url
+
+
+def sync_site_footers():
+    ok = True
+    updated_count = 0
+    for file_path, page_url in iter_site_html_pages():
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            logging.warning(f"读取页面失败 [{file_path}]: {e}")
+            ok = False
+            continue
+
+        updated = refresh_common_page_chrome(content, page_url)
+        if updated == content:
+            continue
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(updated)
+            updated_count += 1
+        except Exception as e:
+            logging.warning(f"写入页面失败 [{file_path}]: {e}")
+            ok = False
+
+    logging.info(f"Footer 链接同步完成，共更新 {updated_count} 个页面")
+    return ok
+
+
 def sync_pdf_files():
     source_base_dir = os.path.join('.', 'Note')
 
@@ -1439,6 +1512,7 @@ def sync_pdf_files():
                     content = content.replace('../../index.html', f'{site_root_prefix}index.html')
                     content = content.replace('../../records.html', f'{site_root_prefix}records.html')
                     content = content.replace('../../about.html', f'{site_root_prefix}about.html')
+                    content = refresh_footer(content, post_url)
 
                     with open(target_html_file, 'w', encoding='utf-8') as f:
                         f.write(content)
@@ -1472,7 +1546,7 @@ if __name__ == '__main__':
     setup_logging()
     logging.info('开始同步 PDF 文件...')
     cleanup_local_artifacts()
-    if sync_record_pages() and sync_pdf_files() and sync_page_navigation() and cleanup_local_artifacts() and deploy_git_repositories():
+    if sync_record_pages() and sync_pdf_files() and sync_page_navigation() and sync_site_footers() and cleanup_local_artifacts() and deploy_git_repositories():
         logging.info('同步完成。')
     else:
         logging.error('同步未完成。')
