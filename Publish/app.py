@@ -7,12 +7,12 @@ from .logging_utils import setup_logging
 from .page_nav import sync_page_navigation
 from .pdf_posts import sync_pdf_files
 from .records import sync_record_pages
+from .source_copy import copy_configured_sources
 
 def main():
     setup_logging()
     logging.info('开始同步 PDF 文件...')
-    cleanup_local_artifacts()
-    if sync_record_pages() and sync_pdf_files() and sync_page_navigation() and sync_site_footers() and cleanup_local_artifacts() and deploy_git_repositories():
+    if copy_configured_sources() and cleanup_local_artifacts() and sync_record_pages() and sync_pdf_files() and sync_page_navigation() and sync_site_footers() and cleanup_local_artifacts() and deploy_git_repositories():
         logging.info('同步完成。')
         return 0
     logging.error('同步未完成。')

@@ -3,6 +3,7 @@
 WEBNOTE_ROOT = os.path.join('.', 'WebNote', 'PatTianFang.github.io')
 ROOT_REPO = '.'
 NOTE_ROOT = os.path.join('.', 'Note')
+SOURCE_COPY_CONFIG_PATH = os.path.join('.', 'Publish', 'copy_sources.json')
 RECORDS_SOURCE_DIR = os.path.join(NOTE_ROOT, '记录')
 IMAGES_DIR = os.path.join(WEBNOTE_ROOT, 'images')
 RECORDS_JSON_PATH = os.path.join(WEBNOTE_ROOT, 'data', 'records.json')

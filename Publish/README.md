@@ -6,17 +6,20 @@
 
 - `../Publish.py`：薄入口，调用 `Publish.app.main()`。
 - `app.py`：发布流程编排，保持原有执行顺序：
-  1. 清理本地生成产物
-  2. 同步记录页
-  3. 同步 PDF 文章页
-  4. 注入上一篇/下一篇导航
-  5. 同步全站 footer
-  6. 再次清理本地生成产物
-  7. 提交并推送仓库
+  1. 按 `copy_sources.json` 将外部文件复制到 `Note` 指定目录
+  2. 清理本地生成产物
+  3. 同步记录页
+  4. 同步 PDF 文章页
+  5. 注入上一篇/下一篇导航
+  6. 同步全站 footer
+  7. 再次清理本地生成产物
+  8. 提交并推送仓库
 
 ## 模块职责
 
 - `config.py`：路径、环境变量名、远程仓库地址等常量。
+- `copy_sources.json`：外部源路径与 `Note` 下目标子目录的映射。
+- `source_copy.py`：读取复制配置，并在发布前保留目录结构地增量覆盖文件。
 - `logging_utils.py`：日志初始化。
 - `cleanup.py`：本地生成产物和空目录清理。
 - `r2.py`：Cloudflare R2 配置、上传、删除、远端对象校验。
@@ -31,6 +34,19 @@
 - `footers.py`：同步全站 HTML footer。
 
 ## 运行
+
+复制配置支持任意数量的源路径对，新增复制任务只需在 `copy_sources.json` 的 `copies` 数组中增加一项，无需修改代码：
+
+```json
+{
+  "copies": [
+    {"source": "F:\\Programme\\Radar\\FERS_Release", "destination": "雷达智能化"},
+    {"source": "D:\\Project\\Release", "destination": "项目归档"}
+  ]
+}
+```
+
+只复制 PDF、Markdown 和图片文件（AVIF、GIF、JPEG、JPG、PNG、SVG、WebP），扩展名大小写不敏感。目录源会保留内部结构；文件源会复制到目标目录下并保留文件名。已存在且大小、修改时间均相同的文件会跳过。
 
 在项目根目录运行：
 
