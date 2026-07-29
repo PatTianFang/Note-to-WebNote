@@ -109,6 +109,34 @@ def get_current_branch(repo_path, fallback_branch=None):
     branch = result.stdout.strip()
     return branch or fallback_branch
 
+def push_and_verify_repo(repo_path, repo_label, branch=None):
+    push_branch = branch or get_current_branch(repo_path)
+    if not push_branch:
+        logging.error(f'无法确定 {repo_label} 的当前分支')
+        return False
+
+    if run_git(['push', '-u', 'origin', push_branch], f'push {repo_label} changes', repo_path=repo_path) is None:
+        return False
+
+    local_head = run_git(['rev-parse', 'HEAD'], f'get local {repo_label} HEAD', repo_path=repo_path)
+    remote_head = run_git(
+        ['ls-remote', 'origin', f'refs/heads/{push_branch}'],
+        f'get remote {repo_label} HEAD',
+        repo_path=repo_path,
+    )
+    if local_head is None or remote_head is None:
+        return False
+
+    local_hash = local_head.stdout.strip()
+    remote_line = remote_head.stdout.strip()
+    remote_hash = remote_line.split()[0] if remote_line else ''
+    if not remote_hash or remote_hash != local_hash:
+        logging.error(f'{repo_label} 推送校验失败: local={local_hash}, remote={remote_hash or "missing"}')
+        return False
+
+    logging.info(f'{repo_label} 推送校验成功: {local_hash}')
+    return True
+
 def commit_and_push_repo(repo_path, repo_label, remote_url=None, branch=None, init_if_missing=False):
     if not ensure_git_repo(repo_path, repo_label, init_if_missing=init_if_missing, branch=branch):
         return False
@@ -128,7 +156,7 @@ def commit_and_push_repo(repo_path, repo_label, remote_url=None, branch=None, in
 
     if not status_before.stdout.strip():
         logging.info(f'{repo_label} has no changes to commit')
-        return True
+        return push_and_verify_repo(repo_path, repo_label, branch=branch)
 
     if run_git(['add', '.'], f'stage {repo_label} changes', repo_path=repo_path) is None:
         return False
@@ -139,18 +167,13 @@ def commit_and_push_repo(repo_path, repo_label, remote_url=None, branch=None, in
 
     if not status_after_add.stdout.strip():
         logging.info(f'{repo_label} has no changes to commit')
-        return True
+        return push_and_verify_repo(repo_path, repo_label, branch=branch)
 
     commit_message = f"Publish {repo_label} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if run_git(['commit', '-m', commit_message], f'commit {repo_label} changes', repo_path=repo_path) is None:
         return False
 
-    push_branch = branch or get_current_branch(repo_path)
-    push_args = ['push']
-    if push_branch:
-        push_args = ['push', '-u', 'origin', push_branch]
-
-    if run_git(push_args, f'push {repo_label} changes', repo_path=repo_path) is None:
+    if not push_and_verify_repo(repo_path, repo_label, branch=branch):
         return False
 
     logging.info(f'{repo_label} committed and pushed')
@@ -167,7 +190,7 @@ def deploy_webnote_repo():
 
     if not status_before.stdout.strip():
         logging.info('WebNote 没有需要提交的变更')
-        return True
+        return push_and_verify_repo(WEBNOTE_ROOT, 'WebNote')
 
     if run_git(['add', '.'], '暂存 WebNote 变更') is None:
         return False
@@ -178,13 +201,13 @@ def deploy_webnote_repo():
 
     if not status_after_add.stdout.strip():
         logging.info('WebNote 没有需要提交的变更')
-        return True
+        return push_and_verify_repo(WEBNOTE_ROOT, 'WebNote')
 
     commit_message = f"Publish notes {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if run_git(['commit', '-m', commit_message], '提交 WebNote 变更') is None:
         return False
 
-    if run_git(['push'], '推送 WebNote 变更') is None:
+    if not push_and_verify_repo(WEBNOTE_ROOT, 'WebNote'):
         return False
 
     logging.info('WebNote 已提交并推送，Cloudflare Pages 将自动部署')
